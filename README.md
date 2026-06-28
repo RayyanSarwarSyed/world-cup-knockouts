@@ -9,23 +9,25 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Short share links require Vercel KV / Upstash Redis environment variables on Vercel.
+Short share links require Redis/Upstash environment variables on Vercel.
+
+This build supports these variable names:
+
+- `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+- `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+- `STORAGE_REST_API_URL` and `STORAGE_REST_API_TOKEN`
+- `STORAGE_URL` and `STORAGE_TOKEN`
+- `STORAGE_KV_REST_API_URL` and `STORAGE_KV_REST_API_TOKEN`
+- `STORAGE_REDIS_REST_URL` and `STORAGE_REDIS_REST_TOKEN`
 
 ## GitHub
 
 ```bash
-git init
 git add .
-git commit -m "build world cup knockouts"
-git branch -M main
-git remote add origin YOUR_GITHUB_REPO_URL
-git push -u origin main
+git commit -m "fix redis share ids"
+git push
 ```
 
 ## Vercel
 
-Import the GitHub repo as a new Vercel project and deploy with the default Next.js settings.
-
-## Vercel KV / Upstash Redis
-
-Add Upstash Redis from the Vercel Marketplace to this project. Vercel will inject the required Redis/KV environment variables automatically.
+After pushing, redeploy the latest production deployment.

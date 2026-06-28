@@ -1,4 +1,3 @@
-import { kv } from "@vercel/kv";
 import { NextRequest, NextResponse } from "next/server";
 
 type PredictionPayload = {
@@ -6,6 +5,55 @@ type PredictionPayload = {
   picks: Record<string, string>;
   scores: Record<string, { team1: string; team2: string }>;
 };
+
+function getRedisConfig() {
+  const url =
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.STORAGE_KV_REST_API_URL ||
+    process.env.STORAGE_REDIS_REST_URL ||
+    process.env.STORAGE_REST_API_URL ||
+    process.env.STORAGE_URL;
+
+  const token =
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.STORAGE_KV_REST_API_TOKEN ||
+    process.env.STORAGE_REDIS_REST_TOKEN ||
+    process.env.STORAGE_REST_API_TOKEN ||
+    process.env.STORAGE_TOKEN;
+
+  if (!url || !token) {
+    return null;
+  }
+
+  return { url: url.replace(/\/$/, ""), token };
+}
+
+async function redisCommand<T>(command: unknown[]) {
+  const config = getRedisConfig();
+
+  if (!config) {
+    throw new Error("Missing Redis environment variables");
+  }
+
+  const response = await fetch(config.url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(command),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("Redis command failed");
+  }
+
+  const data = (await response.json()) as { result: T };
+  return data.result;
+}
 
 function makeId() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -44,26 +92,33 @@ export async function POST(request: NextRequest) {
       scores: payload.scores,
     };
 
-    await kv.set(`prediction:${id}`, cleanPayload, { ex: 60 * 60 * 24 * 120 });
+    await redisCommand(["SET", `prediction:${id}`, JSON.stringify(cleanPayload), "EX", 60 * 60 * 24 * 120]);
 
     return NextResponse.json({ id });
-  } catch {
-    return NextResponse.json({ error: "Could not save prediction" }, { status: 500 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Could not save prediction" },
+      { status: 500 }
+    );
   }
 }
 
 export async function GET(request: NextRequest) {
-  const id = request.nextUrl.searchParams.get("id");
+  try {
+    const id = request.nextUrl.searchParams.get("id");
 
-  if (!id) {
-    return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    }
+
+    const result = await redisCommand<string | null>(["GET", `prediction:${id}`]);
+
+    if (!result) {
+      return NextResponse.json({ error: "Prediction not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(JSON.parse(result));
+  } catch {
+    return NextResponse.json({ error: "Could not load prediction" }, { status: 500 });
   }
-
-  const payload = await kv.get<PredictionPayload>(`prediction:${id}`);
-
-  if (!payload) {
-    return NextResponse.json({ error: "Prediction not found" }, { status: 404 });
-  }
-
-  return NextResponse.json(payload);
 }
