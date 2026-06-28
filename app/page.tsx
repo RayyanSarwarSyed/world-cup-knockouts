@@ -468,28 +468,52 @@ export default function Home() {
   const boardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const shareValue = params.get("p");
-    const sharedPayload = shareValue ? decodePayload(shareValue) : null;
+    async function loadPage() {
+      const params = new URLSearchParams(window.location.search);
+      const shareId = params.get("id");
+      const legacyShareValue = params.get("p");
 
-    if (sharedPayload) {
-      setName(sharedPayload.name || "");
-      setPicks(sharedPayload.picks || {});
-      setScores(sharedPayload.scores || {});
-      setMode("shared");
+      if (shareId) {
+        try {
+          const response = await fetch(`/api/predictions?id=${encodeURIComponent(shareId)}`);
+
+          if (response.ok) {
+            const sharedPayload = await response.json() as SharePayload;
+            setName(sharedPayload.name || "");
+            setPicks(sharedPayload.picks || {});
+            setScores(sharedPayload.scores || {});
+            setMode("shared");
+            setHydrated(true);
+            return;
+          }
+        } catch {
+          // Fall through to local bracket.
+        }
+      }
+
+      const legacyPayload = legacyShareValue ? decodePayload(legacyShareValue) : null;
+
+      if (legacyPayload) {
+        setName(legacyPayload.name || "");
+        setPicks(legacyPayload.picks || {});
+        setScores(legacyPayload.scores || {});
+        setMode("shared");
+        setHydrated(true);
+        return;
+      }
+
+      setName(localStorage.getItem("wck-name") || "");
+
+      const savedPicks = localStorage.getItem("wck-picks");
+      const savedScores = localStorage.getItem("wck-scores");
+
+      if (savedPicks) setPicks(JSON.parse(savedPicks));
+      if (savedScores) setScores(JSON.parse(savedScores));
+
       setHydrated(true);
-      return;
     }
 
-    setName(localStorage.getItem("wck-name") || "");
-
-    const savedPicks = localStorage.getItem("wck-picks");
-    const savedScores = localStorage.getItem("wck-scores");
-
-    if (savedPicks) setPicks(JSON.parse(savedPicks));
-    if (savedScores) setScores(JSON.parse(savedScores));
-
-    setHydrated(true);
+    loadPage();
   }, []);
 
   useEffect(() => {
@@ -608,30 +632,47 @@ export default function Home() {
   async function sharePredictions() {
     if (!isComplete) return;
 
-    const payload = encodePayload({ name, picks, scores });
-    const shareUrl = new URL(window.location.href);
-    shareUrl.searchParams.set("p", payload);
+    try {
+      const response = await fetch("/api/predictions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, picks, scores }),
+      });
 
-    const url = shareUrl.toString();
-    const shareText = `Here are my World Cup knockout predictions:
+      if (!response.ok) {
+        throw new Error("Unable to save prediction");
+      }
+
+      const { id } = await response.json() as { id: string };
+      const shareUrl = new URL(window.location.href);
+      shareUrl.search = "";
+      shareUrl.searchParams.set("id", id);
+
+      const url = shareUrl.toString();
+      const shareText = `Here are my World Cup knockout predictions:
 ${rankings.champion?.name} wins 🏆`;
-    const copyText = `${shareText}
+      const copyText = `${shareText}
 
 Make yours:
 ${url}`;
 
-    if (navigator.share) {
-      await navigator.share({
-        title: "World Cup Knockouts",
-        text: shareText,
-        url,
-      });
-      return;
-    }
+      if (navigator.share) {
+        await navigator.share({
+          title: "World Cup Knockouts",
+          text: shareText,
+          url,
+        });
+        return;
+      }
 
-    await navigator.clipboard.writeText(copyText);
-    setShareCopied(true);
-    window.setTimeout(() => setShareCopied(false), 1800);
+      await navigator.clipboard.writeText(copyText);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1800);
+    } catch {
+      alert("Could not create a share link yet. Check the KV setup on Vercel.");
+    }
   }
 
   return (
