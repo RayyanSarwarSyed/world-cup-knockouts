@@ -102,6 +102,8 @@ const desktopRows = {
   podium: [{ start: 7, span: 5 }],
 };
 
+const matchIds = Array.from({ length: 32 }, (_, index) => `m${index + 1}`);
+
 function validPick(picks: Picks, id: string, team1?: Team, team2?: Team) {
   const pickedCode = picks[id];
   if (!pickedCode) return undefined;
@@ -117,22 +119,51 @@ function loserOf(picks: Picks, id: string, team1?: Team, team2?: Team) {
 }
 
 function encodePayload(payload: SharePayload) {
-  const json = JSON.stringify(payload);
-  const bytes = new TextEncoder().encode(json);
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const namePart = encodeURIComponent(payload.name.trim()).replace(/%20/g, "+");
+
+  const pickPart = matchIds
+    .map((id) => payload.picks[id] || "_")
+    .join(".");
+
+  const scorePart = matchIds
+    .map((id) => {
+      const score = payload.scores[id];
+      return `${score?.team1 || "_"}-${score?.team2 || "_"}`;
+    })
+    .join(".");
+
+  return `${namePart}~${pickPart}~${scorePart}`;
 }
 
 function decodePayload(value: string): SharePayload | null {
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
-    const binary = atob(padded);
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
+    const [namePart = "", pickPart = "", scorePart = ""] = value.split("~");
+    const pickTokens = pickPart.split(".");
+    const scoreTokens = scorePart.split(".");
+
+    const picks: Picks = {};
+    const scores: Scores = {};
+
+    matchIds.forEach((id, index) => {
+      const pick = pickTokens[index];
+      if (pick && pick !== "_") {
+        picks[id] = pick;
+      }
+
+      const [team1 = "", team2 = ""] = (scoreTokens[index] || "").split("-");
+      if (team1 || team2) {
+        scores[id] = {
+          team1: team1 === "_" ? "" : team1,
+          team2: team2 === "_" ? "" : team2,
+        };
+      }
+    });
+
+    return {
+      name: decodeURIComponent(namePart.replace(/\+/g, "%20")),
+      picks,
+      scores,
+    };
   } catch {
     return null;
   }
@@ -578,19 +609,27 @@ export default function Home() {
     if (!isComplete) return;
 
     const payload = encodePayload({ name, picks, scores });
-    const url = `${window.location.origin}${window.location.pathname}?p=${payload}`;
-    const text = `Here are my World Cup knockout predictions:\n${rankings.champion?.name} wins 🏆\n\nMake yours:\n${url}`;
+    const shareUrl = new URL(window.location.href);
+    shareUrl.searchParams.set("p", payload);
+
+    const url = shareUrl.toString();
+    const shareText = `Here are my World Cup knockout predictions:
+${rankings.champion?.name} wins 🏆`;
+    const copyText = `${shareText}
+
+Make yours:
+${url}`;
 
     if (navigator.share) {
       await navigator.share({
         title: "World Cup Knockouts",
-        text,
+        text: shareText,
         url,
       });
       return;
     }
 
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(copyText);
     setShareCopied(true);
     window.setTimeout(() => setShareCopied(false), 1800);
   }
